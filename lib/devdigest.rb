@@ -9,6 +9,7 @@ class Devdigest
     run_github_digest
     run_pagerduty_digest
     run_zendesk_digest
+    run_support_api_digest
     run_tracker_digest
     @digest
   end
@@ -182,12 +183,52 @@ class Devdigest
     "https://support.heroku.com/tickets/#{ticket["id"]}"
   end
 
+  def run_support_api_digest
+    return unless %w{HEROKU_OAUTH_TOKEN VIEW_IDS}.all? {|key| ENV.has_key?(key)}
+    return if skip?("support-api")
+    add "## Support Tickets"
+
+    views = Yajl::Parser.parse(ENV['VIEW_IDS'])
+    parsed_tickets = []
+
+    views.each do |view_id|
+      raw_tickets = RestClient.get(
+        "https://support-api.heroku.com/views/#{view_id}/tickets",
+        {
+          :accept => :json,
+          :Authorization => "Bearer #{ENV['HEROKU_OAUTH_TOKEN']}"
+        }
+      )
+      parsed_tickets.concat Yajl::Parser.parse(raw_tickets)
+    end
+
+    if parsed_tickets.empty?
+      add "- **No open tickets**"
+    else
+      add "- **Open tickets**:"
+      parsed_tickets.each do |ticket|
+        add "  - #{support_ticket_summary(ticket)}"
+      end
+    end
+
+    add ""
+
+  rescue => e
+    add e.to_s
+    e.backtrace.each { |line| add('  ' + line) }
+  end
+
+  def support_ticket_summary(ticket)
+    url = "https://support.heroku.com/tickets/#{ticket["id"]}"
+    author_info = " by #{ticket["requester"]["email"]}"
+    "[#{ticket['subject']}](#{url})#{author_info}"
+  end
+
   def run_tracker_digest
     return unless %w{TRACKER_TOKEN TRACKER_PROJECTS}.all? {|key| ENV.has_key?(key)}
     return if skip?("tracker")
     add "## Tracker\n"
 
-    token = ENV["TRACKER_TOKEN"]
     yesterday = (Time.now - 86400).iso8601
 
     ENV["TRACKER_PROJECTS"].split(",").each do |pid|
